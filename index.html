@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Hand-Tracked Particles</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* Video hidden, used for processing */
+        #input-video {
+            display: none;
+        }
+
+        /* Modern Glassmorphism UI */
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 280px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            color: white;
+            z-index: 10;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s ease;
+        }
+
+        h2 {
+            margin: 0 0 15px 0;
+            font-size: 1.2rem;
+            font-weight: 400;
+            letter-spacing: 1px;
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        .label {
+            font-size: 0.8rem;
+            color: #aaa;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        /* Shape Buttons */
+        .btn-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        button {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            padding: 10px;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-size: 0.9rem;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        button.active {
+            background: #00d2ff;
+            color: #000;
+            font-weight: bold;
+        }
+
+        /* Color Picker */
+        input[type="color"] {
+            width: 100%;
+            height: 40px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            background: none;
+        }
+
+        #status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.8rem;
+        }
+
+        /* Loading Overlay */
+        #loader {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 99;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- three.js extras for loading glTF and orbit controls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+
+    <div id="loader">Initializing Camera & AI...</div>
+
+    <div id="ui-container">
+        <h2>Particle Core</h2>
+
+        <div class="control-group">
+            <span class="label">SHAPE TEMPLATE</span>
+            <div class="btn-grid">
+                <button onclick="setShape('moon')" class="active" id="btn-moon">Moon</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <span class="label">PARTICLE COLOR</span>
+            <input type="color" id="colorPicker" value="#00d2ff">
+        </div>
+
+        <div class="control-group">
+            <span class="label">GESTURE STATUS</span>
+            <div id="gesture-feedback" style="font-size: 0.9rem; color: #00d2ff;">Waiting for hand...</div>
+        </div>
+    </div>
+
+    <!-- Help overlay: instructions + live values -->
+    <div id="help-box"
+        style="position: absolute; top:20px; right:20px; width:320px; padding:14px; background: rgba(0,0,0,0.45); color: #e6f7ff; border-radius:12px; font-size:0.9rem; z-index:11; backdrop-filter: blur(6px);">
+        <div style="font-weight:600; margin-bottom:8px;">Help — Hand Controls</div>
+        <div id="help-instructions">Show an OPEN hand to control the object. Move hand left/right & up/down to rotate on
+            two axes. Move hand closer/away to zoom. Close your hand to pause rotation.</div>
+        <div id="help-values" style="margin-top:10px; color:#bcd; font-size:0.85rem;">Hand: — | Status: — | Zoom: — |
+            Rot: —</div>
+    </div>
+
+    <div id="status">Powered by Three.js & MediaPipe</div>
+    <div id="attribution"
+        style="position:absolute; bottom:6px; left:20px; color:rgba(255,255,255,0.6); font-size:0.8rem; z-index:12;">
+        Model: "NASA CGI Moon Kit" by Thomas Flynn — <a href="https://skfb.ly/6RFPS" target="_blank" rel="noopener"
+            style="color:#9fdcff;">Sketchfab</a> — Licensed <a href="http://creativecommons.org/licenses/by/4.0/"
+            target="_blank" rel="noopener" style="color:#9fdcff;">CC BY 4.0</a></div>
+    <video id="input-video"></video>
+
+    <script>
+        // --- CONFIGURATION ---
+        const PARTICLE_COUNT = 15000
+        const PARTICLE_SIZE = 0.08
+        // Default to Moon as the single active option
+        let currentShape = 'moon'
+        let targetPositions = []
+        let particles
+        let geometry
+        // Group containing particles so we can rotate/transform the whole object
+        let particleGroup
+        let moonGroup
+
+        // Interaction State
+        let handInteraction = {
+            active: false,
+            open: false,
+            prevOpen: false,
+            scale: 1.0, // legacy pinch scale (kept but not required)
+            x: 0,
+            y: 0,
+            // Rotation targets in radians for the particleGroup
+            rotationTarget: { x: 0, y: 0 },
+            // Detected hand label: 'Left' or 'Right'
+            handedness: 'Right',
+            // Camera zoom target (z position)
+            zoomTarget: 30,
+            // Reference calibration (set when hand opens)
+            refCx: 0,
+            refCy: 0,
+            initialRotation: { x: 0, y: 0 }
+        }
+
+        // --- THREE.JS SETUP ---
+        const scene = new THREE.Scene()
+        scene.fog = new THREE.FogExp2(0x050505, 0.02)
+
+        // Basic lighting to make the Moon model visible and well-lit
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6)
+        scene.add(ambientLight)
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6)
+        hemiLight.position.set(0, 50, 0)
+        scene.add(hemiLight)
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.7)
+        dirLight.position.set(5, 10, 7.5)
+        dirLight.castShadow = false
+        scene.add(dirLight)
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
+        // Start a bit out so we don't start inside the Moon
+        camera.position.z = 6
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true })
+        renderer.setSize(window.innerWidth, window.innerHeight)
+        renderer.setPixelRatio(window.devicePixelRatio)
+        document.body.appendChild(renderer.domElement)
+
+        // OrbitControls for zooming/rotating the Moon (enabled when Moon is active)
+        const controls = new THREE.OrbitControls(camera, renderer.domElement)
+        controls.enablePan = true
+        controls.enableRotate = true
+        controls.enableZoom = true
+        controls.enabled = true
+        // Allow much closer zooming for detailed inspection of the Moon
+        controls.minDistance = 0.2
+        controls.maxDistance = 200
+        controls.zoomSpeed = 1.6
+
+        // Dynamic moon radius + minimum allowed camera distance (updated after model load)
+        let moonRadius = 0.5
+        let moonMinDistance = 0.3
+
+        // --- PARTICLE SYSTEM CREATION ---
+        function initParticles() {
+            geometry = new THREE.BufferGeometry()
+            const positions = new Float32Array(PARTICLE_COUNT * 3)
+
+            // Initial positions (random cloud)
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                positions[i] = (Math.random() - 0.5) * 50
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+
+            const material = new THREE.PointsMaterial({
+                color: 0x00d2ff,
+                size: PARTICLE_SIZE,
+                blending: THREE.AdditiveBlending,
+                depthTest: false,
+                transparent: true,
+                opacity: 0.8
+            })
+
+            particles = new THREE.Points(geometry, material)
+
+            // Create a parent group for easier rotation and transforms
+            particleGroup = new THREE.Group()
+            particleGroup.add(particles)
+            scene.add(particleGroup)
+
+            // Separate group for the Moon model (visible by default)
+            moonGroup = new THREE.Group()
+            moonGroup.visible = true
+            scene.add(moonGroup)
+
+            // Generate initial target (not used since particles hidden)
+            generateTargetPositions('sphere')
+
+            // Hide particleGroup by default (we only show Moon)
+            if (particleGroup) particleGroup.visible = false
+        }
+
+        // --- MATH SHAPE GENERATORS ---
+        function generateTargetPositions(shapeType) {
+            const positions = []
+            const scale = 10 // Base scale for shapes
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                let x, y, z
+
+                if (shapeType === 'sphere') {
+                    const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT)
+                    const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi
+                    x = scale * Math.cos(theta) * Math.sin(phi)
+                    y = scale * Math.sin(theta) * Math.sin(phi)
+                    z = scale * Math.cos(phi)
+                }
+                else if (shapeType === 'heart') {
+                    // 3D Heart parametric equation
+                    const t = Math.random() * Math.PI * 2
+                    const u = Math.random() * Math.PI // Full sphere distribution check
+
+                    // Rejection sampling for better volume, or just surface
+                    // Let's use a surface approximation
+                    const phi = Math.random() * Math.PI * 2
+                    const theta = Math.random() * Math.PI
+
+                    // Simple heart shape formula modification
+                    x = 16 * Math.pow(Math.sin(theta), 3) * Math.sin(phi)
+                    y = 13 * Math.cos(theta) - 5 * Math.cos(2 * theta) - 2 * Math.cos(3 * theta) - Math.cos(4 * theta)
+                    z = 6 * Math.cos(theta) * Math.cos(phi)
+
+                    // Normalize scale
+                    x *= 0.5; y *= 0.5; z *= 0.5
+                }
+                else if (shapeType === 'saturn') {
+                    // 70% Sphere, 30% Ring
+                    if (i < PARTICLE_COUNT * 0.7) {
+                        const phi = Math.acos(-1 + (2 * i) / (PARTICLE_COUNT * 0.7))
+                        const theta = Math.sqrt((PARTICLE_COUNT * 0.7) * Math.PI) * phi
+                        x = (scale * 0.6) * Math.cos(theta) * Math.sin(phi)
+                        y = (scale * 0.6) * Math.sin(theta) * Math.sin(phi)
+                        z = (scale * 0.6) * Math.cos(phi)
+                    } else {
+                        // Ring
+                        const theta = Math.random() * Math.PI * 2
+                        const radius = scale * (1.2 + Math.random() * 0.8)
+                        x = radius * Math.cos(theta)
+                        z = radius * Math.sin(theta) // Flat on Y plane usually, let's tilt it
+                        y = (Math.random() - 0.5) * 0.5 // Thin height
+
+                        // Tilt the ring
+                        const tilt = 0.4
+                        const newY = y * Math.cos(tilt) - z * Math.sin(tilt)
+                        const newZ = y * Math.sin(tilt) + z * Math.cos(tilt)
+                        y = newY
+                        z = newZ
+                    }
+                }
+                else if (shapeType === 'flower') {
+                    const u = Math.random() * Math.PI * 2
+                    const v = Math.random() * Math.PI
+                    const r = 5 * (1 + Math.sin(5 * u) * Math.sin(5 * v))
+                    x = r * Math.sin(v) * Math.cos(u)
+                    y = r * Math.sin(v) * Math.sin(u)
+                    z = r * Math.cos(v)
+                }
+
+                positions.push(x, y, z)
+            }
+            targetPositions = positions
+        }
+
+        // --- UI HANDLERS ---
+        function setShape(shape) {
+            currentShape = shape
+            // If the selected shape is the Moon, do not generate particle targets
+            if (shape !== 'moon') generateTargetPositions(shape)
+
+            // Update UI buttons
+            document.querySelectorAll('.btn-grid button').forEach(b => b.classList.remove('active'))
+            document.getElementById(`btn-${shape}`).classList.add('active')
+
+            // Toggle visibility: Moon is its own option
+            if (shape === 'moon') {
+                if (particleGroup) particleGroup.visible = false
+                if (moonGroup) {
+                    moonGroup.visible = true
+                    // frame/zoom camera for Moon — move to a safe distance outside moon surface
+                    const startDist = (typeof moonMinDistance === 'number' && moonMinDistance > 0) ? (moonMinDistance + 1.2) : 6
+                    camera.position.set(0, 0, startDist)
+                    controls.target.set(0, 0, 0)
+                    controls.update()
+                }
+            } else {
+                if (particleGroup) particleGroup.visible = true
+                if (moonGroup) moonGroup.visible = false
+            }
+        }
+
+        document.getElementById('colorPicker').addEventListener('input', (e) => {
+            particles.material.color.set(e.target.value)
+        })
+
+        // --- MEDIAPIPE HAND TRACKING ---
+        const videoElement = document.getElementById('input-video')
+        const gestureFeedback = document.getElementById('gesture-feedback')
+
+        function onResults(results) {
+            document.getElementById('loader').style.display = 'none'
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                handInteraction.active = true
+
+                // Get the first hand
+                const landmarks = results.multiHandLandmarks[0]
+
+                // Record handedness if available
+                if (results.multiHandedness && results.multiHandedness.length > 0) {
+                    handInteraction.handedness = results.multiHandedness[0].label || 'Right'
+                }
+
+                // Compute hand bounding box and center
+                let minX = 1, minY = 1, maxX = 0, maxY = 0
+                for (let i = 0; i < landmarks.length; i++) {
+                    const lm = landmarks[i]
+                    minX = Math.min(minX, lm.x)
+                    minY = Math.min(minY, lm.y)
+                    maxX = Math.max(maxX, lm.x)
+                    maxY = Math.max(maxY, lm.y)
+                }
+                const cx = (minX + maxX) / 2
+                const cy = (minY + maxY) / 2
+                const handSpan = Math.max(maxX - minX, maxY - minY) // normalized size
+
+                // Detect open hand: count extended fingers (tips vs pips)
+                const tipIds = [4, 8, 12, 16, 20]
+                const pipIds = [3, 6, 10, 14, 18]
+                let extended = 0
+                for (let i = 0; i < tipIds.length; i++) {
+                    const tip = landmarks[tipIds[i]]
+                    const pip = landmarks[pipIds[i]]
+                    const d = Math.hypot(tip.x - pip.x, tip.y - pip.y)
+                    if (d > Math.max(0.03, handSpan * 0.22)) extended++
+                }
+                // Consider open if 3 or more fingers extended (excluding noisy thumb cases sometimes)
+                const isOpen = extended >= 3
+                handInteraction.open = isOpen
+
+                // When open: use calibration (set on open start) and map movement deltas to rotation
+                if (isOpen) {
+                    // If hand just opened, capture reference center and initial object rotation
+                    if (!handInteraction.prevOpen) {
+                        handInteraction.refCx = cx
+                        handInteraction.refCy = cy
+                        // Use the active group's current rotation as the baseline
+                        const baselineGroup = (currentShape === 'moon' && moonGroup) ? moonGroup : particleGroup
+                        handInteraction.initialRotation.x = baselineGroup ? baselineGroup.rotation.x : 0
+                        handInteraction.initialRotation.y = baselineGroup ? baselineGroup.rotation.y : 0
+                    }
+
+                    // Sensitivity and maximum ranges
+                    const maxRotY = Math.PI * 1.0 // allow full horizontal sweep
+                    const maxRotX = Math.PI * 0.8 // allow more vertical sweep
+                    const sensitivity = 1.0 // tweak this for faster/slower response
+                    const handSign = (handInteraction.handedness === 'Left') ? -1 : 1
+
+                    // Delta from reference
+                    const dx = cx - handInteraction.refCx
+                    const dy = cy - handInteraction.refCy
+
+                    // Map deltas to rotation offsets and add to initial rotation
+                    const targetRotY = handInteraction.initialRotation.y + dx * 2 * maxRotY * handSign * sensitivity
+                    const targetRotX = handInteraction.initialRotation.x + (handInteraction.refCy - cy) * 2 * maxRotX * sensitivity
+
+                    // Smooth toward the computed target
+                    handInteraction.rotationTarget.x += (targetRotX - handInteraction.rotationTarget.x) * 0.25
+                    handInteraction.rotationTarget.y += (targetRotY - handInteraction.rotationTarget.y) * 0.25
+                }
+
+                // Map handSpan to a normalized zoom factor (closer hand -> larger handSpan -> zoom in)
+                const minSpan = 0.08
+                const maxSpan = 0.45
+                const spanNorm = Math.max(0, Math.min(1, (handSpan - minSpan) / (maxSpan - minSpan)))
+                // store normalized value - used later for Moon-specific zoom
+                handInteraction.zoomNorm = spanNorm
+
+                // For non-moon shapes, continue using the existing camera z-target system
+                if (currentShape !== 'moon') {
+                    const minZ = 16
+                    const maxZ = 40
+                    const desiredZ = maxZ - spanNorm * (maxZ - minZ)
+                    handInteraction.zoomTarget = desiredZ
+                }
+
+                gestureFeedback.innerText = `${handInteraction.handedness} hand — ${isOpen ? 'Open' : 'Closed'}`
+                // update prevOpen state for next frame
+                handInteraction.prevOpen = isOpen
+
+            } else {
+                handInteraction.active = false
+                // Return to normal slowly
+                handInteraction.scale += (1.0 - handInteraction.scale) * 0.1
+                gestureFeedback.innerText = "No hand detected"
+                handInteraction.prevOpen = false
+            }
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            }
+        })
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        })
+
+        hands.onResults(onResults)
+
+        const cameraFeed = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement })
+            },
+            width: 640,
+            height: 480
+        })
+
+        cameraFeed.start().catch(err => {
+            console.error("Camera error:", err)
+            document.getElementById('loader').innerText = "Camera Error: Please allow access."
+        })
+
+        // Initialize particles and groups before loading the GLB so moonGroup exists
+        initParticles()
+
+        // --- GLTF MODEL LOADING (use the glTF version provided) ---
+        // Using an absolute file URL to the local Downloads folder. If you prefer,
+        // move the `scene.gltf` file into the project folder and update the path.
+        try {
+            const gltfLoader = new THREE.GLTFLoader()
+            // Use the local .glb placed in the project root
+            const gltfPath = 'nasa_cgi_moon_kit.glb'
+            gltfLoader.load(gltfPath, (gltf) => {
+                const model = gltf.scene || gltf.scenes[0]
+                if (!model) return
+                // Basic traversal to enable lighting / visibility
+                model.traverse((c) => {
+                    if (c.isMesh) {
+                        c.castShadow = true
+                        c.receiveShadow = true
+                    }
+                })
+                // Adjust scale/position to fit scene
+                model.position.set(0, 0, 0)
+                model.scale.set(0.6, 0.6, 0.6)
+
+                // Add model to separate moonGroup (NOT particleGroup)
+                if (moonGroup) {
+                    moonGroup.add(model)
+
+                    // compute bounding sphere to determine moon size and safe camera distance
+                    try {
+                        const box = new THREE.Box3().setFromObject(model)
+                        const sphere = new THREE.Sphere()
+                        box.getBoundingSphere(sphere)
+                        moonRadius = sphere.radius || 0.5
+                        // add small margin so camera doesn't clip into mesh
+                        moonMinDistance = moonRadius + 0.25
+                        // ensure controls respect new min distance
+                        controls.minDistance = Math.max(0.05, moonMinDistance)
+
+                        // If camera is currently inside the allowed min distance, move it out
+                        const camToTarget = new THREE.Vector3().copy(camera.position).sub(controls.target)
+                        const camDist = camToTarget.length()
+                        if (camDist < (moonMinDistance + 0.5)) {
+                            camToTarget.normalize()
+                            camera.position.copy(controls.target).add(camToTarget.multiplyScalar(moonMinDistance + 1.0))
+                            controls.update()
+                        }
+                    } catch (e) {
+                        console.warn('Bounding sphere calculation failed', e)
+                    }
+
+                    // Add a point light near the Moon to brighten it specifically
+                    const moonLight = new THREE.PointLight(0xffffff, 1.6, 0)
+                    moonLight.position.set(8, 4, 6)
+                    moonGroup.add(moonLight)
+                } else {
+                    particleGroup.add(model) // fallback if moonGroup missing
+                }
+
+                // Hide loader overlay when model ready
+                const loaderEl = document.getElementById('loader')
+                if (loaderEl) loaderEl.style.display = 'none'
+            }, (xhr) => {
+                // progress (optional)
+                // console.log((xhr.loaded / xhr.total * 100) + '% loaded')
+            }, (err) => {
+                console.error('GLTF load error:', err)
+                const loaderEl = document.getElementById('loader')
+                if (loaderEl) loaderEl.innerText = 'Model load error (check path/access)'
+            })
+        } catch (e) {
+            console.warn('GLTF loader not available or failed to initialize', e)
+        }
+
+        // --- ANIMATION LOOP ---
+
+        const clock = new THREE.Clock()
+
+        function animate() {
+            requestAnimationFrame(animate)
+            const time = clock.getElapsedTime()
+
+            // Update particles only if visible (we hide particleGroup for Moon-only view)
+            if (particleGroup && particleGroup.visible) {
+                // Get current positions
+                const positions = particles.geometry.attributes.position.array
+
+                // Interpolation speed
+                const lerpSpeed = 0.08
+
+                for (let i = 0; i < PARTICLE_COUNT; i++) {
+                    const px = positions[i * 3]
+                    const py = positions[i * 3 + 1]
+                    const pz = positions[i * 3 + 2]
+
+                    // Target positions
+                    const tx = targetPositions[i * 3]
+                    const ty = targetPositions[i * 3 + 1]
+                    const tz = targetPositions[i * 3 + 2]
+
+                    // Apply Hand Scale to Target
+                    const s = handInteraction.scale
+
+                    // Move current pos towards target pos * scale
+                    positions[i * 3] += ((tx * s) - px) * lerpSpeed
+                    positions[i * 3 + 1] += ((ty * s) - py) * lerpSpeed
+                    positions[i * 3 + 2] += ((tz * s) - pz) * lerpSpeed
+                }
+
+                particles.geometry.attributes.position.needsUpdate = true
+            }
+
+            // Smoothly adjust camera z toward zoom target (hand-controlled)
+            // Only apply hand-controlled zoom when NOT viewing the Moon (OrbitControls handles Moon zoom)
+            if (currentShape !== 'moon') {
+                camera.position.z += (handInteraction.zoomTarget - camera.position.z) * 0.1
+            }
+
+            // When Moon is active, apply hand-controlled zoom using the normalized hand span
+            if (currentShape === 'moon' && handInteraction.active) {
+                // normalized span (0..1) where 1 = close hand => zoom in
+                const span = (typeof handInteraction.zoomNorm === 'number') ? handInteraction.zoomNorm : 0
+                // Use the computed moonMinDistance so we never move the camera inside the moon
+                const minDist = (typeof moonMinDistance === 'number' && moonMinDistance > 0) ? moonMinDistance : 0.3
+                const maxDist = 20.0
+                const desiredDist = maxDist - span * (maxDist - minDist)
+
+                // Compute direction from controls.target to camera and set new position at desired distance
+                const dir = new THREE.Vector3()
+                dir.copy(camera.position).sub(controls.target).normalize()
+                const newPos = new THREE.Vector3()
+                newPos.copy(controls.target).add(dir.multiplyScalar(desiredDist))
+
+                // Move camera smoothly toward newPos
+                camera.position.lerp(newPos, 0.25)
+                controls.update()
+            }
+
+            // Apply rotation from handInteraction to the active group only when hand is open
+            const activeIsMoon = (currentShape === 'moon')
+            const activeGroup = activeIsMoon ? moonGroup : particleGroup
+
+            if (handInteraction.open) {
+                if (activeGroup) {
+                    activeGroup.rotation.x += (handInteraction.rotationTarget.x - activeGroup.rotation.x) * 0.15
+                    activeGroup.rotation.y += (handInteraction.rotationTarget.y - activeGroup.rotation.y) * 0.15
+                }
+            } else {
+                // Gentle idle rotation when no open hand
+                if (activeGroup) {
+                    activeGroup.rotation.y += 0.0025 // slow constant rotation
+                    activeGroup.rotation.z = Math.sin(time * 0.05) * 0.02
+                }
+            }
+
+            // Update orbit controls (for zoom/pan) when enabled
+            if (controls) controls.update()
+
+            renderer.render(scene, camera)
+
+            // Update help box live values (rotation in degrees and camera z)
+            const helpValues = document.getElementById('help-values')
+            if (helpValues) {
+                const groupForRead = (currentShape === 'moon' && moonGroup) ? moonGroup : particleGroup
+                const rotXdeg = ((groupForRead ? groupForRead.rotation.x : 0) * 180 / Math.PI).toFixed(1)
+                const rotYdeg = ((groupForRead ? groupForRead.rotation.y : 0) * 180 / Math.PI).toFixed(1)
+                helpValues.innerText = `Hand: ${handInteraction.handedness} | Status: ${handInteraction.open ? 'Open' : 'Closed'} | Zoom: ${camera.position.z.toFixed(1)} | Rot: ${rotXdeg}°, ${rotYdeg}°`
+            }
+        }
+
+        animate()
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight
+            camera.updateProjectionMatrix()
+            renderer.setSize(window.innerWidth, window.innerHeight)
+        });
+
+    </script>
+</body>
+
+</html>
