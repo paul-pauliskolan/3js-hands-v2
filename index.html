@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive Hand-Tracked Particles</title>
+    <title>the Moon</title>
     <style>
         body {
             margin: 0;
@@ -135,18 +135,13 @@
     <div id="loader">Initializing Camera & AI...</div>
 
     <div id="ui-container">
-        <h2>Particle Core</h2>
+        <h2>the Moon</h2>
 
         <div class="control-group">
             <span class="label">SHAPE TEMPLATE</span>
             <div class="btn-grid">
                 <button onclick="setShape('moon')" class="active" id="btn-moon">Moon</button>
             </div>
-        </div>
-
-        <div class="control-group">
-            <span class="label">PARTICLE COLOR</span>
-            <input type="color" id="colorPicker" value="#00d2ff">
         </div>
 
         <div class="control-group">
@@ -246,6 +241,9 @@
         // Dynamic moon radius + minimum allowed camera distance (updated after model load)
         let moonRadius = 0.5
         let moonMinDistance = 0.3
+        // Factor to allow closer zooming relative to the computed moon radius.
+        // Lower this (e.g. 0.05) to allow much closer hand-zooming. Be careful: too small -> clipping.
+        const MOON_CLOSE_FACTOR = 0.05
 
         // --- PARTICLE SYSTEM CREATION ---
         function initParticles() {
@@ -384,10 +382,6 @@
                 if (moonGroup) moonGroup.visible = false
             }
         }
-
-        document.getElementById('colorPicker').addEventListener('input', (e) => {
-            particles.material.color.set(e.target.value)
-        })
 
         // --- MEDIAPIPE HAND TRACKING ---
         const videoElement = document.getElementById('input-video')
